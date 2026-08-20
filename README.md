@@ -1,36 +1,54 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Núcleo — mini chat
 
-## Getting Started
+Mini chat privado criado a partir da CLI oficial `create-next-app@latest`.
 
-First, run the development server:
+## Stack
+
+- Next.js 16.3.1 com App Router e TypeScript;
+- React 19;
+- SQLite local com `better-sqlite3`;
+- Server-Sent Events (SSE) para novas mensagens em tempo real;
+- sessão assinada em cookie HttpOnly, sem cadastro, login ou senha.
+
+## Rodando localmente
+
+1. Copie `.env.example` para `.env.local` e defina uma chave forte:
+
+   ```env
+   CHAT_ACCESS_KEY=minha-chave-compartilhada
+   CHAT_SESSION_SECRET=um-segredo-longo-e-diferente
+   ```
+
+2. Inicie o servidor:
+
+   ```bash
+   npm run dev
+   ```
+
+Abra `http://localhost:3000` e compartilhe a mesma chave somente com as pessoas autorizadas.
+
+O banco é criado automaticamente em `data/chat.db`. Essa pasta está ignorada pelo Git para que o histórico local não seja versionado.
+
+## Scripts
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm run dev       # desenvolvimento
+npm run lint      # ESLint
+npm run typecheck # TypeScript
+npm run build     # build de produção
+npm run start     # servidor de produção
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Estrutura
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- `src/app/page.tsx`: entrada e interface da conversa.
+- `src/app/api/access`: valida a chave e cria a sessão.
+- `src/app/api/messages`: lê o histórico e grava mensagens.
+- `src/app/api/events`: mantém o canal SSE de atualização em tempo real.
+- `src/lib/db.ts`: inicialização e consultas do SQLite.
+- `src/lib/auth.ts`: assinatura e validação da sessão.
+- `src/lib/realtime.ts`: distribuição dos eventos para os navegadores conectados.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Observação de implantação
 
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+O canal de tempo real usa memória do processo para distribuir os eventos. Para uma primeira versão em um único servidor isso é suficiente. Se o chat for executado em múltiplas instâncias, troque o distribuidor por Redis, Postgres LISTEN/NOTIFY ou outro broker compartilhado e use armazenamento SQLite em volume persistente.
