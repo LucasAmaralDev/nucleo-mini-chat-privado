@@ -1,4 +1,8 @@
-# Núcleo — mini chat
+# NÚCLEO — mini chat privado com modo PiP
+
+O **NÚCLEO** foi pensado para conversas rápidas, sem a necessidade de criar uma conta ou fazer login. O usuário entra apenas com um nome e uma chave de acesso compartilhada.
+
+Com o modo **Picture-in-Picture (PiP)**, a conversa pode ficar em uma janela flutuante enquanto o usuário realiza outras tarefas, troca de aplicação ou minimiza o navegador, mantendo o chat acessível e atualizado em tempo real.
 
 Mini chat privado criado a partir da CLI oficial `create-next-app@latest`.
 
@@ -26,7 +30,7 @@ Mini chat privado criado a partir da CLI oficial `create-next-app@latest`.
    npm run dev
    ```
 
-Abra `http://localhost:3000` e compartilhe a mesma chave somente com as pessoas autorizadas.
+Abra `http://localhost:25000` e compartilhe a mesma chave somente com as pessoas autorizadas.
 
 O banco é criado automaticamente em `data/chat.db`. Essa pasta está ignorada pelo Git para que o histórico local não seja versionado.
 
