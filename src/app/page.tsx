@@ -55,7 +55,7 @@ export default function HomePage() {
   const [isSending, setIsSending] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const messageListRef = useRef<HTMLDivElement | null>(null);
 
   const closeRealtime = useCallback(() => {
     eventSourceRef.current?.close();
@@ -114,7 +114,13 @@ export default function HomePage() {
   }, [closeRealtime, loadConversation]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const messageList = messageListRef.current;
+    if (messageList) {
+      messageList.scrollTo({
+        top: messageList.scrollHeight,
+        behavior: "smooth",
+      });
+    }
   }, [messages]);
 
   async function handleAccess(event: FormEvent<HTMLFormElement>) {
@@ -305,7 +311,7 @@ export default function HomePage() {
             </div>
           </div>
 
-          <div className="message-list" aria-live="polite">
+          <div className="message-list" aria-live="polite" ref={messageListRef}>
             {groupedMessages.length === 0 ? (
               <div className="empty-chat">
                 <span>☼</span>
@@ -333,7 +339,6 @@ export default function HomePage() {
                 </div>
               ))
             )}
-            <div ref={messagesEndRef} />
           </div>
         </div>
 
