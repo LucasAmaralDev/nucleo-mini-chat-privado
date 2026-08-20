@@ -2,6 +2,17 @@
 
 import type { FormEvent, KeyboardEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+
+type DocumentPictureInPictureManager = {
+  requestWindow(options?: { width?: number; height?: number }): Promise<Window>;
+};
+
+declare global {
+  interface Window {
+    documentPictureInPicture?: DocumentPictureInPictureManager;
+  }
+}
 
 type Message = {
   id: number;
@@ -54,8 +65,15 @@ export default function HomePage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
+  const [miniDraft, setMiniDraft] = useState("");
+  const [isMiniSending, setIsMiniSending] = useState(false);
+  const [miniRoot, setMiniRoot] = useState<HTMLElement | null>(null);
+  const [miniMode, setMiniMode] = useState<"pip" | "popup" | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const messageListRef = useRef<HTMLDivElement | null>(null);
+  const miniMessageListRef = useRef<HTMLDivElement | null>(null);
+  const miniWindowRef = useRef<Window | null>(null);
+  const miniCleanupRef = useRef<(() => void) | null>(null);
 
   const closeRealtime = useCallback(() => {
     eventSourceRef.current?.close();
@@ -123,6 +141,111 @@ export default function HomePage() {
     }
   }, [messages]);
 
+  useEffect(() => {
+    const messageList = miniMessageListRef.current;
+    if (messageList) {
+      messageList.scrollTop = messageList.scrollHeight;
+    }
+  }, [messages, miniRoot]);
+
+  function prepareMiniWindow(nextWindow: Window) {
+    const nextDocument = nextWindow.document;
+    nextDocument.documentElement.lang = "pt-BR";
+    nextDocument.title = "Núcleo | Mini chat";
+    nextDocument.head.innerHTML = "";
+
+    document.querySelectorAll('style, link[rel="stylesheet"]').forEach((node) => {
+      nextDocument.head.appendChild(node.cloneNode(true));
+    });
+
+    const miniStyle = nextDocument.createElement("style");
+    miniStyle.textContent = "html, body { min-width: 0; min-height: 100%; }";
+    nextDocument.head.appendChild(miniStyle);
+    nextDocument.body.innerHTML = "";
+    nextDocument.body.className = "mini-window-body";
+
+    const root = nextDocument.createElement("div");
+    root.id = "mini-chat-root";
+    nextDocument.body.appendChild(root);
+    return root;
+  }
+
+  function closeMiniChat() {
+    const currentWindow = miniWindowRef.current;
+    miniCleanupRef.current?.();
+    miniCleanupRef.current = null;
+    miniWindowRef.current = null;
+    setMiniRoot(null);
+    setMiniMode(null);
+
+    if (currentWindow && !currentWindow.closed) {
+      currentWindow.close();
+    }
+  }
+
+  async function openMiniChat() {
+    if (miniWindowRef.current && !miniWindowRef.current.closed) {
+      miniWindowRef.current.focus();
+      return;
+    }
+
+    let nextWindow: Window | null = null;
+    let nextMode: "pip" | "popup" = "popup";
+
+    try {
+      if (window.documentPictureInPicture) {
+        nextWindow = await window.documentPictureInPicture.requestWindow({
+          width: 360,
+          height: 620,
+        });
+        nextMode = "pip";
+      } else {
+        nextWindow = window.open(
+          "about:blank",
+          "nucleo-mini-chat",
+          "popup=yes,width=360,height=620,resizable=yes"
+        );
+      }
+    } catch {
+      nextWindow = window.open(
+        "about:blank",
+        "nucleo-mini-chat",
+        "popup=yes,width=360,height=620,resizable=yes"
+      );
+    }
+
+    if (!nextWindow) {
+      setError("O navegador bloqueou a janela do mini chat.");
+      return;
+    }
+
+    let root: HTMLElement;
+    try {
+      root = prepareMiniWindow(nextWindow);
+    } catch {
+      nextWindow.close();
+      setError("Não foi possível preparar a janela do mini chat.");
+      return;
+    }
+    miniWindowRef.current = nextWindow;
+    setMiniMode(nextMode);
+    setMiniRoot(root);
+    nextWindow.focus();
+
+    const handlePageHide = () => {
+      if (miniWindowRef.current !== nextWindow) return;
+      miniWindowRef.current = null;
+      miniCleanupRef.current = null;
+      setMiniRoot(null);
+      setMiniMode(null);
+    };
+
+    nextWindow.addEventListener("pagehide", handlePageHide, { once: true });
+    miniCleanupRef.current = () => {
+      nextWindow?.removeEventListener("pagehide", handlePageHide);
+    };
+  }
+
   async function handleAccess(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
@@ -182,6 +305,39 @@ export default function HomePage() {
     }
   }
 
+  async function handleMiniSend(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const messageBody = miniDraft.trim();
+    if (!messageBody || isMiniSending) return;
+
+    setIsMiniSending(true);
+    setError("");
+    try {
+      const response = await fetch("/api/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: messageBody }),
+      });
+      const payload = (await response.json()) as { error?: string };
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          closeMiniChat();
+          closeRealtime();
+          setView("locked");
+        }
+        setError(payload.error || "Não foi possível enviar a mensagem.");
+        return;
+      }
+
+      setMiniDraft("");
+    } catch {
+      setError("Não foi possível enviar a mensagem.");
+    } finally {
+      setIsMiniSending(false);
+    }
+  }
+
   function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (
       event.key === "Enter" &&
@@ -194,6 +350,7 @@ export default function HomePage() {
   }
 
   async function handleLogout() {
+    closeMiniChat();
     closeRealtime();
     await fetch("/api/logout", { method: "POST" });
     setMessages([]);
@@ -296,6 +453,19 @@ export default function HomePage() {
             <span>{isConnected ? "Atualizando em tempo real" : "Reconectando…"}</span>
           </div>
           <div className="user-menu">
+            <button
+              aria-label={miniRoot ? "Fechar mini chat" : "Abrir mini chat"}
+              className="pip-button"
+              onClick={() => {
+                if (miniRoot) closeMiniChat();
+                else void openMiniChat();
+              }}
+              title={miniMode === "pip" ? "Mini chat sempre visível" : "Abrir mini chat"}
+              type="button"
+            >
+              <span aria-hidden="true">↗</span>
+              <span>{miniRoot ? "Fechar mini chat" : "Mini chat"}</span>
+            </button>
             <span className="avatar">{getInitials(name)}</span>
             <span className="user-name">{name}</span>
             <button className="logout-button" onClick={handleLogout} type="button">Sair</button>
@@ -361,6 +531,63 @@ export default function HomePage() {
           <div className="composer-help"><span>Enter envia</span><span>Shift + Enter quebra a linha</span></div>
         </footer>
       </section>
+      {miniRoot && createPortal(
+        <div className="mini-chat-window">
+          <header className="mini-chat-header">
+            <div className="mini-chat-brand">
+              <span className="brand-icon" aria-hidden="true"><span /></span>
+              <div>
+                <strong>NÚCLEO</strong>
+                <span>{isConnected ? "Online em tempo real" : "Reconectando…"}</span>
+              </div>
+            </div>
+            <button aria-label="Fechar mini chat" className="mini-close-button" onClick={closeMiniChat} type="button">×</button>
+          </header>
+
+          <div className="mini-chat-title">
+            <strong>Conversa principal</strong>
+            <span>{name}</span>
+          </div>
+
+          <div className="mini-chat-list" aria-live="polite" ref={miniMessageListRef}>
+            {messages.length === 0 ? (
+              <div className="mini-empty-chat">A conversa está esperando a primeira mensagem.</div>
+            ) : (
+              messages.slice(-60).map((message) => {
+                const isMine = message.authorName === name;
+                return (
+                  <article className={`mini-message ${isMine ? "mine" : ""}`} key={message.id}>
+                    {!isMine && <span className="mini-message-author">{message.authorName}</span>}
+                    <div className="mini-message-bubble">
+                      <p>{message.body}</p>
+                      <time dateTime={new Date(message.createdAt).toISOString()}>{formatTime(message.createdAt)}</time>
+                    </div>
+                  </article>
+                );
+              })
+            )}
+          </div>
+
+          <form className="mini-composer" onSubmit={handleMiniSend}>
+            <textarea
+              aria-label="Mensagem do mini chat"
+              maxLength={2000}
+              onChange={(event) => setMiniDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                  event.preventDefault();
+                  event.currentTarget.form?.requestSubmit();
+                }
+              }}
+              placeholder="Escreva uma mensagem…"
+              rows={1}
+              value={miniDraft}
+            />
+            <button aria-label="Enviar mensagem do mini chat" className="mini-send-button" disabled={!miniDraft.trim() || isMiniSending} type="submit">↑</button>
+          </form>
+        </div>,
+        miniRoot,
+      )}
     </main>
   );
 }

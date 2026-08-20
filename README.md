@@ -9,6 +9,7 @@ Mini chat privado criado a partir da CLI oficial `create-next-app@latest`.
 - SQLite local com `better-sqlite3`;
 - Server-Sent Events (SSE) para novas mensagens em tempo real;
 - sessão assinada em cookie HttpOnly, sem cadastro, login ou senha.
+- mini chat flutuante com Document Picture-in-Picture e fallback para popup.
 
 ## Rodando localmente
 
@@ -28,6 +29,12 @@ Mini chat privado criado a partir da CLI oficial `create-next-app@latest`.
 Abra `http://localhost:3000` e compartilhe a mesma chave somente com as pessoas autorizadas.
 
 O banco é criado automaticamente em `data/chat.db`. Essa pasta está ignorada pelo Git para que o histórico local não seja versionado.
+
+## Mini chat flutuante
+
+Depois de entrar, use o botão `Mini chat` no header. Em navegadores compatíveis, o chat abre em uma janela Picture-in-Picture que fica sobre outras janelas. Nos demais navegadores, o projeto tenta abrir um popup comum.
+
+O modo Picture-in-Picture exige um contexto seguro; em produção, use HTTPS. O suporte varia entre navegadores, então o popup é mantido como fallback.
 
 ## Scripts
 
