@@ -8,12 +8,26 @@ export type ChatMessage = {
   body: string;
   createdAt: number;
   imageUrl?: string;
+  replyTo?: MessageReply;
 };
 
 export type MessageImage = {
   filename: string;
   mimeType: string;
 };
+
+export type MessageReply = {
+  id: number;
+  authorName: string;
+  body: string;
+  hasImage: boolean;
+};
+
+export class ReplyTargetNotFoundError extends Error {
+  constructor() {
+    super("A mensagem respondida não está mais disponível.");
+  }
+}
 
 type DatabaseState = {
   database: Database;
@@ -42,6 +56,10 @@ function initializeDatabase(database: Database) {
       body TEXT NOT NULL,
       image_filename TEXT,
       image_mime TEXT,
+      reply_to_id INTEGER,
+      reply_to_author_name TEXT,
+      reply_to_body TEXT,
+      reply_to_has_image INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL
     );
 
@@ -58,6 +76,24 @@ function initializeDatabase(database: Database) {
 
   if (!columnNames.has("image_mime")) {
     database.run("ALTER TABLE messages ADD COLUMN image_mime TEXT");
+  }
+
+  if (!columnNames.has("reply_to_id")) {
+    database.run("ALTER TABLE messages ADD COLUMN reply_to_id INTEGER");
+  }
+
+  if (!columnNames.has("reply_to_author_name")) {
+    database.run("ALTER TABLE messages ADD COLUMN reply_to_author_name TEXT");
+  }
+
+  if (!columnNames.has("reply_to_body")) {
+    database.run("ALTER TABLE messages ADD COLUMN reply_to_body TEXT");
+  }
+
+  if (!columnNames.has("reply_to_has_image")) {
+    database.run(
+      "ALTER TABLE messages ADD COLUMN reply_to_has_image INTEGER NOT NULL DEFAULT 0",
+    );
   }
 }
 
@@ -132,6 +168,10 @@ export async function listMessages(limit = 100) {
         author_name AS authorName,
         body,
         image_filename AS imageFilename,
+        reply_to_id AS replyToId,
+        reply_to_author_name AS replyToAuthorName,
+        reply_to_body AS replyToBody,
+        reply_to_has_image AS replyToHasImage,
         created_at AS createdAt
       FROM messages
       ORDER BY created_at DESC, id DESC
@@ -143,7 +183,17 @@ export async function listMessages(limit = 100) {
 
   return rows
     .map(
-      ([id, authorName, body, imageFilename, createdAt]) =>
+      ([
+        id,
+        authorName,
+        body,
+        imageFilename,
+        replyToId,
+        replyToAuthorName,
+        replyToBody,
+        replyToHasImage,
+        createdAt,
+      ]) =>
         ({
           id: Number(id),
           authorName: String(authorName),
@@ -152,6 +202,17 @@ export async function listMessages(limit = 100) {
           imageUrl:
             typeof imageFilename === "string"
               ? `/api/images/${encodeURIComponent(imageFilename)}`
+              : undefined,
+          replyTo:
+            typeof replyToId === "number" &&
+            typeof replyToAuthorName === "string" &&
+            typeof replyToBody === "string"
+              ? {
+                  id: replyToId,
+                  authorName: replyToAuthorName,
+                  body: replyToBody,
+                  hasImage: Number(replyToHasImage) === 1,
+                }
               : undefined,
         }) satisfies ChatMessage,
     )
@@ -162,17 +223,60 @@ export async function createMessage(
   authorName: string,
   body: string,
   image?: MessageImage,
+  replyToId?: number,
 ) {
   const createdAt = Date.now();
   const databaseState = await getDatabase();
   const { database } = databaseState;
+  let replyTo: MessageReply | undefined;
+
+  if (replyToId !== undefined) {
+    const replyRow = database.exec(
+      `
+        SELECT id, author_name, body, image_filename
+        FROM messages
+        WHERE id = ?
+        LIMIT 1
+      `,
+      [replyToId],
+    )[0]?.values[0];
+
+    if (!replyRow) throw new ReplyTargetNotFoundError();
+
+    replyTo = {
+      id: Number(replyRow[0]),
+      authorName: String(replyRow[1]),
+      body: String(replyRow[2]),
+      hasImage: typeof replyRow[3] === "string",
+    };
+  }
 
   database.run(
     `
-      INSERT INTO messages (author_name, body, image_filename, image_mime, created_at)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO messages (
+        author_name,
+        body,
+        image_filename,
+        image_mime,
+        reply_to_id,
+        reply_to_author_name,
+        reply_to_body,
+        reply_to_has_image,
+        created_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
-    [authorName, body, image?.filename ?? null, image?.mimeType ?? null, createdAt],
+    [
+      authorName,
+      body,
+      image?.filename ?? null,
+      image?.mimeType ?? null,
+      replyTo?.id ?? null,
+      replyTo?.authorName ?? null,
+      replyTo?.body ?? null,
+      replyTo?.hasImage ? 1 : 0,
+      createdAt,
+    ],
   );
 
   const id = Number(
@@ -188,6 +292,7 @@ export async function createMessage(
     imageUrl: image
       ? `/api/images/${encodeURIComponent(image.filename)}`
       : undefined,
+    replyTo,
   } satisfies ChatMessage;
 }
 

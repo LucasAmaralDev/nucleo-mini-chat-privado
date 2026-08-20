@@ -28,6 +28,14 @@ type Message = {
   body: string;
   createdAt: number;
   imageUrl?: string;
+  replyTo?: MessageReply;
+};
+
+type MessageReply = {
+  id: number;
+  authorName: string;
+  body: string;
+  hasImage: boolean;
 };
 
 type ViewState = "checking" | "locked" | "chat";
@@ -42,6 +50,7 @@ type QueuedMessage = {
   id: string;
   body: string;
   image?: File;
+  replyToId?: number;
   status: "pending" | "sending" | "failed";
 };
 
@@ -84,6 +93,20 @@ function getInitials(name: string) {
 
 function formatFileSize(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(bytes >= 1024 * 1024 ? 1 : 2)} MB`;
+}
+
+function getReplyPreview(reply: MessageReply) {
+  const content = reply.body.trim() || (reply.hasImage ? "Imagem" : "Mensagem");
+  return content.length > 160 ? `${content.slice(0, 157)}…` : content;
+}
+
+function getReplyFromMessage(message: Message): MessageReply {
+  return {
+    id: message.id,
+    authorName: message.authorName,
+    body: message.body,
+    hasImage: Boolean(message.imageUrl),
+  };
 }
 
 async function compressImage(file: File) {
@@ -149,6 +172,7 @@ export default function HomePage() {
   const [isConnected, setIsConnected] = useState(false);
   const [miniDraft, setMiniDraft] = useState("");
   const [draftImage, setDraftImage] = useState<DraftImage | null>(null);
+  const [replyTo, setReplyTo] = useState<MessageReply | null>(null);
   const [isCompressingImage, setIsCompressingImage] = useState(false);
   const [outbox, setOutbox] = useState<QueuedMessage[]>([]);
   const [miniRoot, setMiniRoot] = useState<HTMLElement | null>(null);
@@ -156,6 +180,8 @@ export default function HomePage() {
   const eventSourceRef = useRef<EventSource | null>(null);
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const miniMessageListRef = useRef<HTMLDivElement | null>(null);
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const miniComposerRef = useRef<HTMLTextAreaElement | null>(null);
   const miniWindowRef = useRef<Window | null>(null);
   const miniCleanupRef = useRef<(() => void) | null>(null);
   const outboxRef = useRef<QueuedMessage[]>([]);
@@ -184,6 +210,7 @@ export default function HomePage() {
     });
     source.addEventListener("cleared", () => {
       setMessages([]);
+      setReplyTo(null);
     });
   }, [closeRealtime]);
 
@@ -410,6 +437,14 @@ export default function HomePage() {
     void prepareImage(image, "Imagem colada");
   }
 
+  function startReply(message: Message, composer: "main" | "mini") {
+    setReplyTo(getReplyFromMessage(message));
+    window.setTimeout(() => {
+      const target = composer === "main" ? composerRef.current : miniComposerRef.current;
+      target?.focus();
+    }, 0);
+  }
+
   const replaceOutbox = useCallback(
     (update: (current: QueuedMessage[]) => QueuedMessage[]) => {
       const nextOutbox = update(outboxRef.current);
@@ -423,6 +458,7 @@ export default function HomePage() {
     const formData = new FormData();
     formData.set("body", message.body);
     if (message.image) formData.set("image", message.image);
+    if (message.replyToId) formData.set("replyToId", String(message.replyToId));
 
     const response = await fetch("/api/messages", {
       method: "POST",
@@ -484,11 +520,12 @@ export default function HomePage() {
     }
   }, [closeRealtime, replaceOutbox]);
 
-  function enqueueMessage(messageBody: string) {
+  function enqueueMessage(messageBody: string, reply?: MessageReply | null) {
     const message: QueuedMessage = {
       body: messageBody,
       id: crypto.randomUUID(),
       image: draftImage?.file,
+      replyToId: reply?.id,
       status: "pending",
     };
 
@@ -502,9 +539,10 @@ export default function HomePage() {
     if ((!messageBody && !draftImage) || isCompressingImage) return;
 
     setError("");
-    enqueueMessage(messageBody);
+    enqueueMessage(messageBody, replyTo);
     setDraft("");
     setDraftImage(null);
+    setReplyTo(null);
   }
 
   function handleMiniSend(event: FormEvent<HTMLFormElement>) {
@@ -513,9 +551,10 @@ export default function HomePage() {
     if ((!messageBody && !draftImage) || isCompressingImage) return;
 
     setError("");
-    enqueueMessage(messageBody);
+    enqueueMessage(messageBody, replyTo);
     setMiniDraft("");
     setDraftImage(null);
+    setReplyTo(null);
   }
 
   function retryOutbox() {
@@ -551,6 +590,7 @@ export default function HomePage() {
     setMessages([]);
     setDraft("");
     setDraftImage(null);
+    setReplyTo(null);
     replaceOutbox(() => []);
     setError("");
     setView("locked");
@@ -702,6 +742,12 @@ export default function HomePage() {
                         <div className="message-content">
                           {!isMine && <span className="message-author">{message.authorName}</span>}
                           <div className="message-bubble">
+                            {message.replyTo && (
+                              <div className="reply-reference">
+                                <strong>{message.replyTo.authorName}</strong>
+                                <span>{getReplyPreview(message.replyTo)}</span>
+                              </div>
+                            )}
                             {message.imageUrl && (
                               <a
                                 className="message-image-link"
@@ -718,6 +764,14 @@ export default function HomePage() {
                             )}
                             {message.body && <p>{message.body}</p>}
                             <time dateTime={new Date(message.createdAt).toISOString()}>{formatTime(message.createdAt)}</time>
+                            <button
+                              aria-label={`Responder à mensagem de ${message.authorName}`}
+                              className="message-action"
+                              onClick={() => startReply(message, "main")}
+                              type="button"
+                            >
+                              <span aria-hidden="true">•••</span>
+                            </button>
                           </div>
                         </div>
                       </article>
@@ -740,6 +794,15 @@ export default function HomePage() {
                   <button onClick={discardFailedOutbox} type="button">Descartar falha</button>
                 </div>
               )}
+            </div>
+          )}
+          {replyTo && (
+            <div className="reply-composer">
+              <div>
+                <strong>Respondendo a {replyTo.authorName}</strong>
+                <span>{getReplyPreview(replyTo)}</span>
+              </div>
+              <button aria-label="Cancelar resposta" onClick={() => setReplyTo(null)} type="button">×</button>
             </div>
           )}
           {draftImage && (
@@ -766,6 +829,7 @@ export default function HomePage() {
               onKeyDown={handleComposerKeyDown}
               onPaste={handleComposerPaste}
               placeholder="Escreva uma mensagem…"
+              ref={composerRef}
               rows={1}
               value={draft}
             />
@@ -813,6 +877,12 @@ export default function HomePage() {
                   <article className={`mini-message ${isMine ? "mine" : ""}`} key={message.id}>
                     {!isMine && <span className="mini-message-author">{message.authorName}</span>}
                     <div className="mini-message-bubble">
+                      {message.replyTo && (
+                        <div className="reply-reference">
+                          <strong>{message.replyTo.authorName}</strong>
+                          <span>{getReplyPreview(message.replyTo)}</span>
+                        </div>
+                      )}
                       {message.imageUrl && (
                         <a
                           className="message-image-link"
@@ -829,6 +899,14 @@ export default function HomePage() {
                       )}
                       {message.body && <p>{message.body}</p>}
                       <time dateTime={new Date(message.createdAt).toISOString()}>{formatTime(message.createdAt)}</time>
+                      <button
+                        aria-label={`Responder à mensagem de ${message.authorName}`}
+                        className="message-action"
+                        onClick={() => startReply(message, "mini")}
+                        type="button"
+                      >
+                        <span aria-hidden="true">•••</span>
+                      </button>
                     </div>
                   </article>
                 );
@@ -846,6 +924,15 @@ export default function HomePage() {
                     <button onClick={discardFailedOutbox} type="button">Descartar</button>
                   </div>
                 )}
+              </div>
+            )}
+            {replyTo && (
+              <div className="reply-composer mini-reply-composer">
+                <div>
+                  <strong>Respondendo a {replyTo.authorName}</strong>
+                  <span>{getReplyPreview(replyTo)}</span>
+                </div>
+                <button aria-label="Cancelar resposta" onClick={() => setReplyTo(null)} type="button">×</button>
               </div>
             )}
             {draftImage && (
@@ -868,6 +955,7 @@ export default function HomePage() {
                 }}
                 onPaste={handleComposerPaste}
                 placeholder="Escreva uma mensagem…"
+                ref={miniComposerRef}
                 rows={1}
                 value={miniDraft}
               />

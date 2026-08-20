@@ -98,10 +98,17 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .message-content { min-width: 0; }
 .message-author { color: #8b8f99; display: block; font-family: Consolas, "Courier New", monospace; font-size: 9px; margin: 0 0 6px 4px; }
 .message-row.mine .message-author { text-align: right; }
-.message-bubble { align-items: end; background: var(--panel-soft); border: 1px solid rgba(255, 255, 255, 0.075); border-radius: 4px 15px 15px 15px; color: #d9d9dc; display: grid; gap: 5px 13px; grid-template-columns: minmax(0, 1fr) auto; padding: 11px 13px; }
+.message-bubble { align-items: end; background: var(--panel-soft); border: 1px solid rgba(255, 255, 255, 0.075); border-radius: 4px 15px 15px 15px; color: #d9d9dc; display: grid; gap: 5px 13px; grid-template-columns: minmax(0, 1fr) auto; padding: 11px 38px 11px 13px; position: relative; }
 .message-row.mine .message-bubble { background: rgba(121, 139, 57, 0.27); border-color: rgba(215, 244, 109, 0.16); border-radius: 15px 4px 15px 15px; }
 .message-bubble p { font-size: 12px; line-height: 1.6; margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 .message-bubble time { align-self: flex-end; color: #777b86; font-family: Consolas, "Courier New", monospace; font-size: 8px; }
+.reply-reference { background: rgba(7, 9, 13, 0.28); border-left: 3px solid #878f69; border-radius: 5px; display: grid; gap: 2px; grid-column: 1 / -1; min-width: 0; padding: 6px 8px; }
+.message-row.mine .reply-reference { background: rgba(215, 244, 109, 0.08); border-left-color: var(--accent); }
+.reply-reference strong { color: #c3cb9b; font-family: Consolas, "Courier New", monospace; font-size: 8px; font-weight: 600; }
+.reply-reference span { color: #aaadb5; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.message-action { align-items: center; background: rgba(12, 15, 21, 0.92); border: 1px solid rgba(255, 255, 255, 0.13); border-radius: 7px; color: #bfc5ae; display: inline-flex; font-family: Consolas, "Courier New", monospace; font-size: 10px; height: 23px; justify-content: center; letter-spacing: -1px; opacity: 0; padding: 0; pointer-events: none; position: absolute; right: 7px; top: 7px; transition: opacity 120ms ease, background 120ms ease; width: 24px; z-index: 1; }
+.message-bubble:hover .message-action, .message-action:focus-visible { opacity: 1; pointer-events: auto; }
+.message-action:hover { background: #2b3125; color: var(--accent); }
 .message-image-link { border-radius: 9px; display: block; grid-column: 1 / -1; overflow: hidden; }
 .message-image-link img { background: #0a0d12; display: block; max-height: 400px; max-width: 100%; object-fit: contain; width: 100%; }
 .empty-chat { align-items: center; color: #727681; display: flex; flex-direction: column; font-size: 12px; gap: 12px; justify-content: center; min-height: 210px; text-align: center; }
@@ -113,6 +120,12 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .outbox-status > div { display: flex; gap: 7px; }
 .outbox-status button { background: transparent; border: 0; color: var(--accent); font-family: inherit; font-size: inherit; padding: 2px 0; }
 .outbox-status button:hover { color: #efffa8; text-decoration: underline; }
+.reply-composer { align-items: center; background: rgba(215, 244, 109, 0.07); border: 1px solid rgba(215, 244, 109, 0.15); border-left: 3px solid var(--accent); border-radius: 10px; display: flex; gap: 10px; margin: 0 0 9px; min-width: 0; padding: 7px 9px; }
+.reply-composer > div { display: grid; gap: 2px; min-width: 0; }
+.reply-composer strong { color: #c7d29d; font-family: Consolas, "Courier New", monospace; font-size: 9px; font-weight: 600; }
+.reply-composer span { color: #9ea48f; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reply-composer button { background: transparent; border: 0; color: #aeb393; font-size: 19px; line-height: 1; margin-left: auto; padding: 2px 4px; }
+.reply-composer button:hover { color: var(--accent); }
 .image-preview { align-items: center; background: rgba(215, 244, 109, 0.08); border: 1px solid rgba(215, 244, 109, 0.16); border-radius: 11px; display: flex; gap: 10px; margin-bottom: 9px; padding: 7px; }
 .image-preview img { border-radius: 7px; height: 38px; object-fit: cover; width: 48px; }
 .image-preview span { display: grid; gap: 2px; min-width: 0; }
@@ -149,13 +162,21 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .mini-message { margin: 0 0 10px; max-width: 91%; }
 .mini-message.mine { margin-left: auto; }
 .mini-message-author { color: #8b8f99; display: block; font-family: Consolas, "Courier New", monospace; font-size: 8px; margin: 0 0 4px 4px; }
-.mini-message-bubble { align-items: flex-end; background: var(--panel-soft); border: 1px solid rgba(255, 255, 255, 0.075); border-radius: 4px 12px 12px 12px; display: grid; gap: 4px 8px; grid-template-columns: minmax(0, 1fr) auto; padding: 8px 9px; }
+.mini-message-bubble { align-items: flex-end; background: var(--panel-soft); border: 1px solid rgba(255, 255, 255, 0.075); border-radius: 4px 12px 12px 12px; display: grid; gap: 4px 8px; grid-template-columns: minmax(0, 1fr) auto; padding: 8px 33px 8px 9px; position: relative; }
 .mini-message.mine .mini-message-bubble { background: rgba(121, 139, 57, 0.27); border-color: rgba(215, 244, 109, 0.16); border-radius: 12px 4px 12px 12px; }
 .mini-message-bubble p { font-size: 11px; line-height: 1.45; margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 .mini-message-bubble time { color: #777b86; flex: 0 0 auto; font-family: Consolas, "Courier New", monospace; font-size: 7px; }
+.mini-message-bubble .reply-reference { border-left-width: 2px; border-radius: 4px; gap: 1px; padding: 5px 6px; }
+.mini-message-bubble .reply-reference strong { font-size: 7px; }
+.mini-message-bubble .reply-reference span { font-size: 8px; }
+.mini-message-bubble .message-action { height: 20px; right: 5px; top: 5px; width: 21px; }
 .mini-message-bubble .message-image-link img { max-height: 220px; }
 .mini-composer-wrap { border-top: 1px solid var(--line); }
 .mini-outbox-status { border: 0; border-radius: 0; font-size: 8px; margin: 0; padding: 7px 10px 0; }
+.mini-reply-composer { border-color: transparent; border-left-width: 2px; border-radius: 0; margin: 0; padding: 7px 10px 0; }
+.mini-reply-composer strong { font-size: 8px; }
+.mini-reply-composer span { font-size: 8px; }
+.mini-reply-composer button { font-size: 16px; }
 .mini-image-preview { align-items: center; background: rgba(215, 244, 109, 0.08); display: flex; gap: 7px; padding: 7px 10px 0; }
 .mini-image-preview img { border-radius: 5px; height: 28px; object-fit: cover; width: 35px; }
 .mini-image-preview span { color: #aeb395; font-family: Consolas, "Courier New", monospace; font-size: 8px; }
@@ -194,4 +215,8 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   .conversation-title > span { font-size: 8px; }
   .message-bubble { gap: 8px; padding: 10px; }
   .composer-help { justify-content: space-between; }
+}
+
+@media (hover: none) {
+  .message-action { opacity: 1; pointer-events: auto; }
 }

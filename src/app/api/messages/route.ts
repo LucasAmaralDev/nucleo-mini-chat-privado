@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { getSessionFromRequest } from "@/lib/auth";
-import { createMessage, listMessages, runChatMutation } from "@/lib/db";
+import {
+  createMessage,
+  listMessages,
+  ReplyTargetNotFoundError,
+  runChatMutation,
+} from "@/lib/db";
 import { publishMessage } from "@/lib/realtime";
 import { deleteImage, saveImage, type StoredImage } from "@/lib/uploads";
 
@@ -26,6 +31,19 @@ function isFile(value: FormDataEntryValue | null): value is File {
   return value !== null && typeof value !== "string" && "arrayBuffer" in value;
 }
 
+function parseReplyToId(value: unknown) {
+  if (value === null || value === undefined || value === "") return undefined;
+
+  if (typeof value === "number") {
+    return Number.isSafeInteger(value) && value > 0 ? value : null;
+  }
+
+  if (typeof value !== "string" || !/^[1-9]\d*$/.test(value)) return null;
+
+  const id = Number(value);
+  return Number.isSafeInteger(id) ? id : null;
+}
+
 export async function GET(request: Request) {
   const session = getSessionFromRequest(request);
   if (!session) return unauthorized();
@@ -44,14 +62,20 @@ export async function POST(request: Request) {
 
   try {
     let bodyValue: unknown;
+    let replyToValue: unknown;
     let imageFile: File | null = null;
 
     if (request.headers.get("content-type")?.includes("application/json")) {
-      const payload = (await request.json()) as { body?: unknown };
+      const payload = (await request.json()) as {
+        body?: unknown;
+        replyToId?: unknown;
+      };
       bodyValue = payload.body;
+      replyToValue = payload.replyToId;
     } else {
       const formData = await request.formData();
       bodyValue = formData.get("body");
+      replyToValue = formData.get("replyToId");
       const imageValue = formData.get("image");
 
       if (imageValue !== null && !isFile(imageValue)) {
@@ -65,7 +89,15 @@ export async function POST(request: Request) {
     }
 
     const body = sanitizeBody(bodyValue);
+    const replyToId = parseReplyToId(replyToValue);
     const hasImage = Boolean(imageFile && imageFile.size > 0);
+
+    if (replyToId === null) {
+      return NextResponse.json(
+        { error: "A resposta selecionada não é válida." },
+        { status: 400 },
+      );
+    }
 
     if (!body && !hasImage) {
       return NextResponse.json(
@@ -90,12 +122,20 @@ export async function POST(request: Request) {
         uploadedImage = saveImage(imageBytes, imageFile.type);
       }
 
-      return createMessage(session.name, body, uploadedImage);
+      return createMessage(session.name, body, uploadedImage, replyToId);
     });
     publishMessage(message);
     return NextResponse.json({ message }, { status: 201 });
-  } catch {
+  } catch (error) {
     if (uploadedImage) deleteImage(uploadedImage.filename);
+
+    if (error instanceof ReplyTargetNotFoundError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: 409 },
+      );
+    }
+
     return NextResponse.json(
       { error: "Não foi possível enviar a mensagem." },
       { status: 400 },
