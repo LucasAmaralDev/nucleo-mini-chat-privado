@@ -109,6 +109,10 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .empty-chat p { margin: 0; }
 .composer-wrap { border-top: 1px solid var(--line); padding: 17px 23px 14px; }
 .composer-error { margin: 0 0 9px; }
+.outbox-status { align-items: center; background: rgba(121, 139, 57, 0.12); border: 1px solid rgba(215, 244, 109, 0.14); border-radius: 9px; color: #aeb895; display: flex; font-family: Consolas, "Courier New", monospace; font-size: 9px; gap: 10px; justify-content: space-between; margin: 0 0 9px; padding: 7px 9px; }
+.outbox-status > div { display: flex; gap: 7px; }
+.outbox-status button { background: transparent; border: 0; color: var(--accent); font-family: inherit; font-size: inherit; padding: 2px 0; }
+.outbox-status button:hover { color: #efffa8; text-decoration: underline; }
 .image-preview { align-items: center; background: rgba(215, 244, 109, 0.08); border: 1px solid rgba(215, 244, 109, 0.16); border-radius: 11px; display: flex; gap: 10px; margin-bottom: 9px; padding: 7px; }
 .image-preview img { border-radius: 7px; height: 38px; object-fit: cover; width: 48px; }
 .image-preview span { display: grid; gap: 2px; min-width: 0; }
@@ -151,6 +155,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .mini-message-bubble time { color: #777b86; flex: 0 0 auto; font-family: Consolas, "Courier New", monospace; font-size: 7px; }
 .mini-message-bubble .message-image-link img { max-height: 220px; }
 .mini-composer-wrap { border-top: 1px solid var(--line); }
+.mini-outbox-status { border: 0; border-radius: 0; font-size: 8px; margin: 0; padding: 7px 10px 0; }
 .mini-image-preview { align-items: center; background: rgba(215, 244, 109, 0.08); display: flex; gap: 7px; padding: 7px 10px 0; }
 .mini-image-preview img { border-radius: 5px; height: 28px; object-fit: cover; width: 35px; }
 .mini-image-preview span { color: #aeb395; font-family: Consolas, "Courier New", monospace; font-size: 8px; }

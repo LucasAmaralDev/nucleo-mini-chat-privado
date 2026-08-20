@@ -33,6 +33,13 @@ type DraftImage = {
   name: string;
 };
 
+type QueuedMessage = {
+  id: string;
+  body: string;
+  image?: File;
+  status: "pending" | "sending" | "failed";
+};
+
 const IMAGE_QUALITY = 0.7;
 const MAX_IMAGE_DIMENSION = 1920;
 const MAX_SOURCE_IMAGE_SIZE = 15 * 1024 * 1024;
@@ -134,12 +141,11 @@ export default function HomePage() {
   const [draft, setDraft] = useState("");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isSending, setIsSending] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [miniDraft, setMiniDraft] = useState("");
-  const [isMiniSending, setIsMiniSending] = useState(false);
   const [draftImage, setDraftImage] = useState<DraftImage | null>(null);
   const [isCompressingImage, setIsCompressingImage] = useState(false);
+  const [outbox, setOutbox] = useState<QueuedMessage[]>([]);
   const [miniRoot, setMiniRoot] = useState<HTMLElement | null>(null);
   const [miniMode, setMiniMode] = useState<"pip" | "popup" | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -147,6 +153,8 @@ export default function HomePage() {
   const miniMessageListRef = useRef<HTMLDivElement | null>(null);
   const miniWindowRef = useRef<Window | null>(null);
   const miniCleanupRef = useRef<(() => void) | null>(null);
+  const outboxRef = useRef<QueuedMessage[]>([]);
+  const isProcessingOutboxRef = useRef(false);
 
   const closeRealtime = useCallback(() => {
     eventSourceRef.current?.close();
@@ -381,10 +389,19 @@ export default function HomePage() {
     }
   }
 
-  async function postMessage(messageBody: string) {
+  const replaceOutbox = useCallback(
+    (update: (current: QueuedMessage[]) => QueuedMessage[]) => {
+      const nextOutbox = update(outboxRef.current);
+      outboxRef.current = nextOutbox;
+      setOutbox(nextOutbox);
+    },
+    [],
+  );
+
+  async function postQueuedMessage(message: QueuedMessage) {
     const formData = new FormData();
-    formData.set("body", messageBody);
-    if (draftImage) formData.set("image", draftImage.file);
+    formData.set("body", message.body);
+    if (message.image) formData.set("image", message.image);
 
     const response = await fetch("/api/messages", {
       method: "POST",
@@ -394,61 +411,105 @@ export default function HomePage() {
     return { payload, response };
   }
 
-  async function handleSend(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const messageBody = draft.trim();
-    if ((!messageBody && !draftImage) || isSending || isCompressingImage) return;
+  const processOutbox = useCallback(async () => {
+    if (isProcessingOutboxRef.current) return;
+    isProcessingOutboxRef.current = true;
 
-    setIsSending(true);
-    setError("");
     try {
-      const { response, payload } = await postMessage(messageBody);
+      while (true) {
+        const message = outboxRef.current[0];
+        if (!message || message.status === "failed") break;
 
-      if (!response.ok) {
-        if (response.status === 401) {
-          closeRealtime();
-          setView("locked");
+        replaceOutbox((current) =>
+          current.map((item) =>
+            item.id === message.id ? { ...item, status: "sending" } : item,
+          ),
+        );
+
+        try {
+          const { response, payload } = await postQueuedMessage(message);
+
+          if (!response.ok) {
+            if (response.status === 401) {
+              replaceOutbox(() => []);
+              closeRealtime();
+              setView("locked");
+            } else {
+              replaceOutbox((current) =>
+                current.map((item) =>
+                  item.id === message.id ? { ...item, status: "failed" } : item,
+                ),
+              );
+            }
+            setError(payload.error || "Não foi possível enviar a mensagem.");
+            break;
+          }
+
+          replaceOutbox((current) =>
+            current.filter((item) => item.id !== message.id),
+          );
+        } catch {
+          replaceOutbox((current) =>
+            current.map((item) =>
+              item.id === message.id ? { ...item, status: "failed" } : item,
+            ),
+          );
+          setError("Não foi possível enviar a mensagem. Tente novamente.");
+          break;
         }
-        setError(payload.error || "Não foi possível enviar a mensagem.");
-        return;
       }
-
-      setDraft("");
-      setDraftImage(null);
-    } catch {
-      setError("Não foi possível enviar a mensagem.");
     } finally {
-      setIsSending(false);
+      isProcessingOutboxRef.current = false;
     }
+  }, [closeRealtime, replaceOutbox]);
+
+  function enqueueMessage(messageBody: string) {
+    const message: QueuedMessage = {
+      body: messageBody,
+      id: crypto.randomUUID(),
+      image: draftImage?.file,
+      status: "pending",
+    };
+
+    replaceOutbox((current) => [...current, message]);
+    void processOutbox();
   }
 
-  async function handleMiniSend(event: FormEvent<HTMLFormElement>) {
+  function handleSend(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const messageBody = draft.trim();
+    if ((!messageBody && !draftImage) || isCompressingImage) return;
+
+    setError("");
+    enqueueMessage(messageBody);
+    setDraft("");
+    setDraftImage(null);
+  }
+
+  function handleMiniSend(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const messageBody = miniDraft.trim();
-    if ((!messageBody && !draftImage) || isMiniSending || isCompressingImage) return;
+    if ((!messageBody && !draftImage) || isCompressingImage) return;
 
-    setIsMiniSending(true);
     setError("");
-    try {
-      const { response, payload } = await postMessage(messageBody);
+    enqueueMessage(messageBody);
+    setMiniDraft("");
+    setDraftImage(null);
+  }
 
-      if (!response.ok) {
-        if (response.status === 401) {
-          closeMiniChat();
-          closeRealtime();
-          setView("locked");
-        }
-        setError(payload.error || "Não foi possível enviar a mensagem.");
-        return;
-      }
+  function retryOutbox() {
+    setError("");
+    replaceOutbox((current) =>
+      current.map((item) =>
+        item.status === "failed" ? { ...item, status: "pending" } : item,
+      ),
+    );
+    void processOutbox();
+  }
 
-      setMiniDraft("");
-      setDraftImage(null);
-    } catch {
-      setError("Não foi possível enviar a mensagem.");
-    } finally {
-      setIsMiniSending(false);
-    }
+  function discardFailedOutbox() {
+    replaceOutbox((current) => current.filter((item) => item.status !== "failed"));
+    void processOutbox();
   }
 
   function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -469,6 +530,7 @@ export default function HomePage() {
     setMessages([]);
     setDraft("");
     setDraftImage(null);
+    replaceOutbox(() => []);
     setError("");
     setView("locked");
   }
@@ -482,6 +544,12 @@ export default function HomePage() {
     else groups.push({ date, messages: [message] });
     return groups;
   }, []);
+  const hasFailedOutbox = outbox.some((message) => message.status === "failed");
+  const outboxLabel = hasFailedOutbox
+    ? "Envio pausado"
+    : outbox[0]?.status === "sending"
+      ? `Enviando ${outbox.length} ${outbox.length === 1 ? "mensagem" : "mensagens"}…`
+      : `${outbox.length} ${outbox.length === 1 ? "mensagem na fila" : "mensagens na fila"}`;
 
   if (view === "checking") {
     return (
@@ -642,6 +710,17 @@ export default function HomePage() {
 
         <footer className="composer-wrap">
           {error && <p className="composer-error" role="alert">{error}</p>}
+          {outbox.length > 0 && (
+            <div className="outbox-status" role="status">
+              <span>{outboxLabel}</span>
+              {hasFailedOutbox && (
+                <div>
+                  <button onClick={retryOutbox} type="button">Tentar novamente</button>
+                  <button onClick={discardFailedOutbox} type="button">Descartar falha</button>
+                </div>
+              )}
+            </div>
+          )}
           {draftImage && (
             <div className="image-preview">
               <img alt="Prévia da imagem selecionada" src={draftImage.previewUrl} />
@@ -677,11 +756,11 @@ export default function HomePage() {
               />
               <span aria-hidden="true">▧</span>
             </label>
-            <button aria-label="Enviar mensagem" className="send-button" disabled={(!draft.trim() && !draftImage) || isSending || isCompressingImage} type="submit">
+            <button aria-label="Enviar mensagem" className="send-button" disabled={(!draft.trim() && !draftImage) || isCompressingImage} type="submit">
               <span aria-hidden="true">↑</span>
             </button>
           </form>
-          <div className="composer-help"><span>{isCompressingImage ? "Comprimindo imagem…" : "70% de qualidade"}</span><span>Enter envia</span><span>Shift + Enter quebra a linha</span></div>
+          <div className="composer-help"><span>{isCompressingImage ? "Comprimindo imagem…" : outbox.length > 0 ? outboxLabel : "70% de qualidade"}</span><span>Enter envia</span><span>Shift + Enter quebra a linha</span></div>
         </footer>
       </section>
       {miniRoot && createPortal(
@@ -736,6 +815,17 @@ export default function HomePage() {
           </div>
 
           <div className="mini-composer-wrap">
+            {outbox.length > 0 && (
+              <div className="outbox-status mini-outbox-status" role="status">
+                <span>{outboxLabel}</span>
+                {hasFailedOutbox && (
+                  <div>
+                    <button onClick={retryOutbox} type="button">Tentar</button>
+                    <button onClick={discardFailedOutbox} type="button">Descartar</button>
+                  </div>
+                )}
+              </div>
+            )}
             {draftImage && (
               <div className="mini-image-preview">
                 <img alt="Prévia da imagem selecionada" src={draftImage.previewUrl} />
@@ -767,7 +857,7 @@ export default function HomePage() {
                 />
                 <span aria-hidden="true">▧</span>
               </label>
-              <button aria-label="Enviar mensagem do mini chat" className="mini-send-button" disabled={(!miniDraft.trim() && !draftImage) || isMiniSending || isCompressingImage} type="submit">↑</button>
+              <button aria-label="Enviar mensagem do mini chat" className="mini-send-button" disabled={(!miniDraft.trim() && !draftImage) || isCompressingImage} type="submit">↑</button>
             </form>
           </div>
         </div>,
