@@ -13,6 +13,7 @@ Mini chat privado criado a partir da CLI oficial `create-next-app@latest`.
 - SQLite local com `sql.js` (WebAssembly, sem binários nativos);
 - Server-Sent Events (SSE) para novas mensagens em tempo real;
 - sessão assinada em cookie HttpOnly, sem cadastro, login ou senha.
+- imagens comprimidas no navegador para WebP a 70% de qualidade;
 - mini chat flutuante com Document Picture-in-Picture e fallback para popup.
 
 ## Rodando localmente
@@ -34,6 +35,8 @@ Abra `http://localhost:25000` e compartilhe a mesma chave somente com as pessoas
 
 O banco é criado automaticamente em `data/chat.db`. Essa pasta está ignorada pelo Git para que o histórico local não seja versionado. A cada mensagem, o arquivo é persistido no disco; para este mini chat em uma única instância, isso evita depender de extensões nativas do sistema.
 
+As imagens ficam em `data/uploads`, exigem uma sessão autorizada para serem abertas e são comprimidas no navegador para WebP com qualidade de 70%. O limite após a compressão é de 4 MB por imagem.
+
 ## Mini chat flutuante
 
 Depois de entrar, use o botão `Mini chat` no header. Em navegadores compatíveis, o chat abre em uma janela Picture-in-Picture que fica sobre outras janelas. Nos demais navegadores, o projeto tenta abrir um popup comum.
@@ -48,6 +51,7 @@ npm run lint      # ESLint
 npm run typecheck # TypeScript
 npm run build     # build de produção
 npm run start     # servidor de produção
+npm run cleanup   # limpeza interna do chat
 ```
 
 ## Estrutura
@@ -56,9 +60,29 @@ npm run start     # servidor de produção
 - `src/app/api/access`: valida a chave e cria a sessão.
 - `src/app/api/messages`: lê o histórico e grava mensagens.
 - `src/app/api/events`: mantém o canal SSE de atualização em tempo real.
+- `src/app/api/internal/cleanup`: recebe a limpeza interna acionada pela cron.
 - `src/lib/db.ts`: inicialização e consultas do SQLite.
 - `src/lib/auth.ts`: assinatura e validação da sessão.
 - `src/lib/realtime.ts`: distribuição dos eventos para os navegadores conectados.
+- `scripts/cleanup-chat.mjs`: chama a limpeza usando as variáveis do `.env`.
+
+## Limpeza diária às 03:00
+
+Defina uma chave exclusiva e longa em `.env` ou `.env.local`:
+
+```env
+CHAT_CLEANUP_KEY=uma-chave-exclusiva-para-a-limpeza
+```
+
+O comando abaixo limpa mensagens, banco de imagens e atualiza na hora os navegadores que estiverem com o chat aberto. Teste manualmente com `npm run cleanup`.
+
+No Ubuntu, abra `crontab -e` para o usuário que executa o projeto e adicione:
+
+```cron
+0 3 * * * cd /home/ubuntu/nucleo-mini-chat-privado && /usr/bin/npm run cleanup >> data/cleanup-cron.log 2>&1
+```
+
+O horário é o fuso configurado no servidor Ubuntu. A cron se comunica apenas com `http://127.0.0.1:25000` por padrão e a rota interna exige `CHAT_CLEANUP_KEY`.
 
 ## Observação de implantação
 

@@ -42,3 +42,15 @@ export function publishMessage(message: ChatMessage) {
     }
   }
 }
+
+export function publishChatCleared() {
+  const chunk = encodeServerEvent("cleared", { at: Date.now() });
+
+  for (const client of getRealtime().clients) {
+    try {
+      client.enqueue(chunk);
+    } catch {
+      removeRealtimeClient(client);
+    }
+  }
+}

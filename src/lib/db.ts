@@ -7,6 +7,12 @@ export type ChatMessage = {
   authorName: string;
   body: string;
   createdAt: number;
+  imageUrl?: string;
+};
+
+export type MessageImage = {
+  filename: string;
+  mimeType: string;
 };
 
 type DatabaseState = {
@@ -16,6 +22,7 @@ type DatabaseState = {
 
 type GlobalWithDatabase = typeof globalThis & {
   __minichatDatabasePromise?: Promise<DatabaseState>;
+  __minichatMutationTail?: Promise<void>;
 };
 
 const globalWithDatabase = globalThis as GlobalWithDatabase;
@@ -33,12 +40,25 @@ function initializeDatabase(database: Database) {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       author_name TEXT NOT NULL,
       body TEXT NOT NULL,
+      image_filename TEXT,
+      image_mime TEXT,
       created_at INTEGER NOT NULL
     );
 
     CREATE INDEX IF NOT EXISTS idx_messages_created_at
       ON messages (created_at, id);
   `);
+
+  const columns = database.exec("PRAGMA table_info(messages)")[0]?.values ?? [];
+  const columnNames = new Set(columns.map((column) => String(column[1])));
+
+  if (!columnNames.has("image_filename")) {
+    database.run("ALTER TABLE messages ADD COLUMN image_filename TEXT");
+  }
+
+  if (!columnNames.has("image_mime")) {
+    database.run("ALTER TABLE messages ADD COLUMN image_mime TEXT");
+  }
 }
 
 async function openDatabase(): Promise<DatabaseState> {
@@ -83,6 +103,25 @@ function persistDatabase({ database, databasePath }: DatabaseState) {
   fs.renameSync(temporaryPath, databasePath);
 }
 
+export async function runChatMutation<T>(operation: () => Promise<T> | T) {
+  const previousMutation = globalWithDatabase.__minichatMutationTail ?? Promise.resolve();
+  let releaseMutation: (() => void) | undefined;
+  const currentMutation = new Promise<void>((resolve) => {
+    releaseMutation = resolve;
+  });
+  globalWithDatabase.__minichatMutationTail = previousMutation.then(
+    () => currentMutation,
+  );
+
+  await previousMutation;
+
+  try {
+    return await operation();
+  } finally {
+    releaseMutation?.();
+  }
+}
+
 export async function listMessages(limit = 100) {
   const safeLimit = Math.min(Math.max(Math.floor(limit), 1), 200);
   const { database } = await getDatabase();
@@ -92,6 +131,7 @@ export async function listMessages(limit = 100) {
         id,
         author_name AS authorName,
         body,
+        image_filename AS imageFilename,
         created_at AS createdAt
       FROM messages
       ORDER BY created_at DESC, id DESC
@@ -103,28 +143,36 @@ export async function listMessages(limit = 100) {
 
   return rows
     .map(
-      ([id, authorName, body, createdAt]) =>
+      ([id, authorName, body, imageFilename, createdAt]) =>
         ({
           id: Number(id),
           authorName: String(authorName),
           body: String(body),
           createdAt: Number(createdAt),
+          imageUrl:
+            typeof imageFilename === "string"
+              ? `/api/images/${encodeURIComponent(imageFilename)}`
+              : undefined,
         }) satisfies ChatMessage,
     )
     .reverse();
 }
 
-export async function createMessage(authorName: string, body: string) {
+export async function createMessage(
+  authorName: string,
+  body: string,
+  image?: MessageImage,
+) {
   const createdAt = Date.now();
   const databaseState = await getDatabase();
   const { database } = databaseState;
 
   database.run(
     `
-      INSERT INTO messages (author_name, body, created_at)
-      VALUES (?, ?, ?)
+      INSERT INTO messages (author_name, body, image_filename, image_mime, created_at)
+      VALUES (?, ?, ?, ?, ?)
     `,
-    [authorName, body, createdAt],
+    [authorName, body, image?.filename ?? null, image?.mimeType ?? null, createdAt],
   );
 
   const id = Number(
@@ -137,5 +185,22 @@ export async function createMessage(authorName: string, body: string) {
     authorName,
     body,
     createdAt,
+    imageUrl: image
+      ? `/api/images/${encodeURIComponent(image.filename)}`
+      : undefined,
   } satisfies ChatMessage;
+}
+
+export async function clearMessages() {
+  const databaseState = await getDatabase();
+  const { database } = databaseState;
+  const messageCount = Number(
+    database.exec("SELECT COUNT(*) AS total FROM messages")[0]?.values[0]?.[0] ?? 0,
+  );
+
+  database.run("DELETE FROM messages");
+  database.run("DELETE FROM sqlite_sequence WHERE name = 'messages'");
+  persistDatabase(databaseState);
+
+  return messageCount;
 }

@@ -22,6 +22,18 @@ function getSessionSecret() {
   return process.env.CHAT_SESSION_SECRET?.trim() || getAccessKey();
 }
 
+function getCleanupKey() {
+  return process.env.CHAT_CLEANUP_KEY?.trim() || "";
+}
+
+function secretsMatch(expected: string, provided: unknown) {
+  if (!expected || typeof provided !== "string") return false;
+
+  const expectedHash = createHash("sha256").update(expected).digest();
+  const providedHash = createHash("sha256").update(provided).digest();
+  return timingSafeEqual(expectedHash, providedHash);
+}
+
 function toBase64Url(value: string) {
   return Buffer.from(value, "utf8").toString("base64url");
 }
@@ -44,12 +56,13 @@ export function sanitizeName(value: unknown) {
 }
 
 export function isAccessKeyValid(value: unknown) {
-  const accessKey = getAccessKey();
-  if (!accessKey || typeof value !== "string") return false;
+  return secretsMatch(getAccessKey(), value);
+}
 
-  const expectedHash = createHash("sha256").update(accessKey).digest();
-  const providedHash = createHash("sha256").update(value).digest();
-  return timingSafeEqual(expectedHash, providedHash);
+export function isCleanupRequestAuthorized(request: Request) {
+  const authorization = request.headers.get("authorization") || "";
+  const [scheme, key] = authorization.split(" ");
+  return scheme === "Bearer" && secretsMatch(getCleanupKey(), key);
 }
 
 export function createSessionToken(name: string) {

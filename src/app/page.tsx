@@ -1,6 +1,9 @@
 "use client";
 
-import type { FormEvent, KeyboardEvent } from "react";
+/* Imagens protegidas dependem do cookie da sessão; por isso não usam o otimizador público do Next. */
+/* eslint-disable @next/next/no-img-element */
+
+import type { ChangeEvent, FormEvent, KeyboardEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
@@ -19,9 +22,21 @@ type Message = {
   authorName: string;
   body: string;
   createdAt: number;
+  imageUrl?: string;
 };
 
 type ViewState = "checking" | "locked" | "chat";
+
+type DraftImage = {
+  file: File;
+  previewUrl: string;
+  name: string;
+};
+
+const IMAGE_QUALITY = 0.7;
+const MAX_IMAGE_DIMENSION = 1920;
+const MAX_SOURCE_IMAGE_SIZE = 15 * 1024 * 1024;
+const MAX_COMPRESSED_IMAGE_SIZE = 4 * 1024 * 1024;
 
 function formatTime(timestamp: number) {
   return new Intl.DateTimeFormat("pt-BR", {
@@ -55,6 +70,62 @@ function getInitials(name: string) {
     .toUpperCase();
 }
 
+function formatFileSize(bytes: number) {
+  return `${(bytes / 1024 / 1024).toFixed(bytes >= 1024 * 1024 ? 1 : 2)} MB`;
+}
+
+async function compressImage(file: File) {
+  if (!file.type.match(/^image\/(jpeg|png|webp)$/)) {
+    throw new Error("Escolha uma imagem JPEG, PNG ou WebP.");
+  }
+
+  if (file.size > MAX_SOURCE_IMAGE_SIZE) {
+    throw new Error("Escolha uma imagem de até 15 MB para comprimir.");
+  }
+
+  const sourceUrl = URL.createObjectURL(file);
+
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const nextImage = new Image();
+      nextImage.onload = () => resolve(nextImage);
+      nextImage.onerror = () => reject(new Error("Não foi possível abrir esta imagem."));
+      nextImage.src = sourceUrl;
+    });
+    const scale = Math.min(
+      1,
+      MAX_IMAGE_DIMENSION / Math.max(image.naturalWidth, image.naturalHeight),
+    );
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Não foi possível preparar a imagem.");
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+    const compressed = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(
+        (blob) => (blob ? resolve(blob) : reject(new Error("Não foi possível comprimir a imagem."))),
+        "image/webp",
+        IMAGE_QUALITY,
+      );
+    });
+
+    if (compressed.size > MAX_COMPRESSED_IMAGE_SIZE) {
+      throw new Error("A imagem ficou maior que 4 MB mesmo após a compressão.");
+    }
+
+    return new File(
+      [compressed],
+      `${file.name.replace(/\.[^.]+$/, "") || "imagem"}.webp`,
+      { type: "image/webp" },
+    );
+  } finally {
+    URL.revokeObjectURL(sourceUrl);
+  }
+}
+
 export default function HomePage() {
   const [view, setView] = useState<ViewState>("checking");
   const [name, setName] = useState("");
@@ -67,6 +138,8 @@ export default function HomePage() {
   const [isConnected, setIsConnected] = useState(false);
   const [miniDraft, setMiniDraft] = useState("");
   const [isMiniSending, setIsMiniSending] = useState(false);
+  const [draftImage, setDraftImage] = useState<DraftImage | null>(null);
+  const [isCompressingImage, setIsCompressingImage] = useState(false);
   const [miniRoot, setMiniRoot] = useState<HTMLElement | null>(null);
   const [miniMode, setMiniMode] = useState<"pip" | "popup" | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -95,6 +168,9 @@ export default function HomePage() {
           ? current
           : [...current, nextMessage],
       );
+    });
+    source.addEventListener("cleared", () => {
+      setMessages([]);
     });
   }, [closeRealtime]);
 
@@ -147,6 +223,12 @@ export default function HomePage() {
       messageList.scrollTop = messageList.scrollHeight;
     }
   }, [messages, miniRoot]);
+
+  useEffect(() => {
+    return () => {
+      if (draftImage) URL.revokeObjectURL(draftImage.previewUrl);
+    };
+  }, [draftImage]);
 
   function prepareMiniWindow(nextWindow: Window) {
     const nextDocument = nextWindow.document;
@@ -273,20 +355,54 @@ export default function HomePage() {
     }
   }
 
+  async function handleImageChange(event: ChangeEvent<HTMLInputElement>) {
+    const sourceImage = event.target.files?.[0];
+    event.target.value = "";
+    if (!sourceImage || isCompressingImage) return;
+
+    setError("");
+    setIsCompressingImage(true);
+
+    try {
+      const compressedImage = await compressImage(sourceImage);
+      setDraftImage({
+        file: compressedImage,
+        previewUrl: URL.createObjectURL(compressedImage),
+        name: sourceImage.name,
+      });
+    } catch (imageError) {
+      setError(
+        imageError instanceof Error
+          ? imageError.message
+          : "Não foi possível preparar a imagem.",
+      );
+    } finally {
+      setIsCompressingImage(false);
+    }
+  }
+
+  async function postMessage(messageBody: string) {
+    const formData = new FormData();
+    formData.set("body", messageBody);
+    if (draftImage) formData.set("image", draftImage.file);
+
+    const response = await fetch("/api/messages", {
+      method: "POST",
+      body: formData,
+    });
+    const payload = (await response.json()) as { error?: string };
+    return { payload, response };
+  }
+
   async function handleSend(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const messageBody = draft.trim();
-    if (!messageBody || isSending) return;
+    if ((!messageBody && !draftImage) || isSending || isCompressingImage) return;
 
     setIsSending(true);
     setError("");
     try {
-      const response = await fetch("/api/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ body: messageBody }),
-      });
-      const payload = (await response.json()) as { error?: string };
+      const { response, payload } = await postMessage(messageBody);
 
       if (!response.ok) {
         if (response.status === 401) {
@@ -298,6 +414,7 @@ export default function HomePage() {
       }
 
       setDraft("");
+      setDraftImage(null);
     } catch {
       setError("Não foi possível enviar a mensagem.");
     } finally {
@@ -308,17 +425,12 @@ export default function HomePage() {
   async function handleMiniSend(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const messageBody = miniDraft.trim();
-    if (!messageBody || isMiniSending) return;
+    if ((!messageBody && !draftImage) || isMiniSending || isCompressingImage) return;
 
     setIsMiniSending(true);
     setError("");
     try {
-      const response = await fetch("/api/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ body: messageBody }),
-      });
-      const payload = (await response.json()) as { error?: string };
+      const { response, payload } = await postMessage(messageBody);
 
       if (!response.ok) {
         if (response.status === 401) {
@@ -331,6 +443,7 @@ export default function HomePage() {
       }
 
       setMiniDraft("");
+      setDraftImage(null);
     } catch {
       setError("Não foi possível enviar a mensagem.");
     } finally {
@@ -355,6 +468,7 @@ export default function HomePage() {
     await fetch("/api/logout", { method: "POST" });
     setMessages([]);
     setDraft("");
+    setDraftImage(null);
     setError("");
     setView("locked");
   }
@@ -499,7 +613,21 @@ export default function HomePage() {
                         <div className="message-content">
                           {!isMine && <span className="message-author">{message.authorName}</span>}
                           <div className="message-bubble">
-                            <p>{message.body}</p>
+                            {message.imageUrl && (
+                              <a
+                                className="message-image-link"
+                                href={message.imageUrl}
+                                rel="noreferrer"
+                                target="_blank"
+                              >
+                                <img
+                                  alt={`Imagem enviada por ${message.authorName}`}
+                                  loading="lazy"
+                                  src={message.imageUrl}
+                                />
+                              </a>
+                            )}
+                            {message.body && <p>{message.body}</p>}
                             <time dateTime={new Date(message.createdAt).toISOString()}>{formatTime(message.createdAt)}</time>
                           </div>
                         </div>
@@ -514,6 +642,22 @@ export default function HomePage() {
 
         <footer className="composer-wrap">
           {error && <p className="composer-error" role="alert">{error}</p>}
+          {draftImage && (
+            <div className="image-preview">
+              <img alt="Prévia da imagem selecionada" src={draftImage.previewUrl} />
+              <span>
+                <strong>{draftImage.name}</strong>
+                <small>WebP · {formatFileSize(draftImage.file.size)} · 70%</small>
+              </span>
+              <button
+                aria-label="Remover imagem"
+                onClick={() => setDraftImage(null)}
+                type="button"
+              >
+                ×
+              </button>
+            </div>
+          )}
           <form className="composer" onSubmit={handleSend}>
             <textarea
               aria-label="Mensagem"
@@ -524,11 +668,20 @@ export default function HomePage() {
               rows={1}
               value={draft}
             />
-            <button aria-label="Enviar mensagem" className="send-button" disabled={!draft.trim() || isSending} type="submit">
+            <label className="image-upload-button" title="Adicionar imagem">
+              <input
+                accept="image/jpeg,image/png,image/webp"
+                aria-label="Adicionar imagem"
+                onChange={handleImageChange}
+                type="file"
+              />
+              <span aria-hidden="true">▧</span>
+            </label>
+            <button aria-label="Enviar mensagem" className="send-button" disabled={(!draft.trim() && !draftImage) || isSending || isCompressingImage} type="submit">
               <span aria-hidden="true">↑</span>
             </button>
           </form>
-          <div className="composer-help"><span>Enter envia</span><span>Shift + Enter quebra a linha</span></div>
+          <div className="composer-help"><span>{isCompressingImage ? "Comprimindo imagem…" : "70% de qualidade"}</span><span>Enter envia</span><span>Shift + Enter quebra a linha</span></div>
         </footer>
       </section>
       {miniRoot && createPortal(
@@ -559,7 +712,21 @@ export default function HomePage() {
                   <article className={`mini-message ${isMine ? "mine" : ""}`} key={message.id}>
                     {!isMine && <span className="mini-message-author">{message.authorName}</span>}
                     <div className="mini-message-bubble">
-                      <p>{message.body}</p>
+                      {message.imageUrl && (
+                        <a
+                          className="message-image-link"
+                          href={message.imageUrl}
+                          rel="noreferrer"
+                          target="_blank"
+                        >
+                          <img
+                            alt={`Imagem enviada por ${message.authorName}`}
+                            loading="lazy"
+                            src={message.imageUrl}
+                          />
+                        </a>
+                      )}
+                      {message.body && <p>{message.body}</p>}
                       <time dateTime={new Date(message.createdAt).toISOString()}>{formatTime(message.createdAt)}</time>
                     </div>
                   </article>
@@ -568,23 +735,41 @@ export default function HomePage() {
             )}
           </div>
 
-          <form className="mini-composer" onSubmit={handleMiniSend}>
-            <textarea
-              aria-label="Mensagem do mini chat"
-              maxLength={2000}
-              onChange={(event) => setMiniDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-                  event.preventDefault();
-                  event.currentTarget.form?.requestSubmit();
-                }
-              }}
-              placeholder="Escreva uma mensagem…"
-              rows={1}
-              value={miniDraft}
-            />
-            <button aria-label="Enviar mensagem do mini chat" className="mini-send-button" disabled={!miniDraft.trim() || isMiniSending} type="submit">↑</button>
-          </form>
+          <div className="mini-composer-wrap">
+            {draftImage && (
+              <div className="mini-image-preview">
+                <img alt="Prévia da imagem selecionada" src={draftImage.previewUrl} />
+                <span>WebP · {formatFileSize(draftImage.file.size)} · 70%</span>
+                <button aria-label="Remover imagem" onClick={() => setDraftImage(null)} type="button">×</button>
+              </div>
+            )}
+            <form className="mini-composer" onSubmit={handleMiniSend}>
+              <textarea
+                aria-label="Mensagem do mini chat"
+                maxLength={2000}
+                onChange={(event) => setMiniDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                    event.preventDefault();
+                    event.currentTarget.form?.requestSubmit();
+                  }
+                }}
+                placeholder="Escreva uma mensagem…"
+                rows={1}
+                value={miniDraft}
+              />
+              <label className="image-upload-button mini-image-upload-button" title="Adicionar imagem">
+                <input
+                  accept="image/jpeg,image/png,image/webp"
+                  aria-label="Adicionar imagem"
+                  onChange={handleImageChange}
+                  type="file"
+                />
+                <span aria-hidden="true">▧</span>
+              </label>
+              <button aria-label="Enviar mensagem do mini chat" className="mini-send-button" disabled={(!miniDraft.trim() && !draftImage) || isMiniSending || isCompressingImage} type="submit">↑</button>
+            </form>
+          </div>
         </div>,
         miniRoot,
       )}
