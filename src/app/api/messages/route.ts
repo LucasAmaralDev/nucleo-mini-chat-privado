@@ -17,7 +17,7 @@ export async function GET(request: Request) {
   if (!session) return unauthorized();
 
   return NextResponse.json(
-    { name: session.name, messages: listMessages() },
+    { name: session.name, messages: await listMessages() },
     { headers: { "Cache-Control": "no-store" } },
   );
 }
@@ -50,7 +50,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const message = createMessage(session.name, body);
+    const message = await createMessage(session.name, body);
     publishMessage(message);
     return NextResponse.json({ message }, { status: 201 });
   } catch {
