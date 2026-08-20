@@ -3,7 +3,12 @@
 /* Imagens protegidas dependem do cookie da sessão; por isso não usam o otimizador público do Next. */
 /* eslint-disable @next/next/no-img-element */
 
-import type { ChangeEvent, FormEvent, KeyboardEvent } from "react";
+import type {
+  ChangeEvent,
+  ClipboardEvent,
+  FormEvent,
+  KeyboardEvent,
+} from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
@@ -363,10 +368,8 @@ export default function HomePage() {
     }
   }
 
-  async function handleImageChange(event: ChangeEvent<HTMLInputElement>) {
-    const sourceImage = event.target.files?.[0];
-    event.target.value = "";
-    if (!sourceImage || isCompressingImage) return;
+  async function prepareImage(sourceImage: File, name = sourceImage.name) {
+    if (isCompressingImage) return;
 
     setError("");
     setIsCompressingImage(true);
@@ -376,7 +379,7 @@ export default function HomePage() {
       setDraftImage({
         file: compressedImage,
         previewUrl: URL.createObjectURL(compressedImage),
-        name: sourceImage.name,
+        name: name || "Imagem colada",
       });
     } catch (imageError) {
       setError(
@@ -387,6 +390,24 @@ export default function HomePage() {
     } finally {
       setIsCompressingImage(false);
     }
+  }
+
+  async function handleImageChange(event: ChangeEvent<HTMLInputElement>) {
+    const sourceImage = event.target.files?.[0];
+    event.target.value = "";
+    if (!sourceImage) return;
+    await prepareImage(sourceImage);
+  }
+
+  function handleComposerPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+    const imageItem = Array.from(event.clipboardData.items).find((item) =>
+      item.type.startsWith("image/"),
+    );
+    const image = imageItem?.getAsFile();
+    if (!image) return;
+
+    event.preventDefault();
+    void prepareImage(image, "Imagem colada");
   }
 
   const replaceOutbox = useCallback(
@@ -743,6 +764,7 @@ export default function HomePage() {
               maxLength={2000}
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={handleComposerKeyDown}
+              onPaste={handleComposerPaste}
               placeholder="Escreva uma mensagem…"
               rows={1}
               value={draft}
@@ -760,7 +782,7 @@ export default function HomePage() {
               <span aria-hidden="true">↑</span>
             </button>
           </form>
-          <div className="composer-help"><span>{isCompressingImage ? "Comprimindo imagem…" : outbox.length > 0 ? outboxLabel : "70% de qualidade"}</span><span>Enter envia</span><span>Shift + Enter quebra a linha</span></div>
+          <div className="composer-help"><span>{isCompressingImage ? "Comprimindo imagem…" : outbox.length > 0 ? outboxLabel : "70% de qualidade"}</span><span>Ctrl + V cola imagem</span><span>Enter envia</span><span>Shift + Enter quebra a linha</span></div>
         </footer>
       </section>
       {miniRoot && createPortal(
@@ -844,6 +866,7 @@ export default function HomePage() {
                     event.currentTarget.form?.requestSubmit();
                   }
                 }}
+                onPaste={handleComposerPaste}
                 placeholder="Escreva uma mensagem…"
                 rows={1}
                 value={miniDraft}
