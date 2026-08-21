@@ -95,10 +95,11 @@ export function readSessionToken(token: string | undefined) {
     const payload = JSON.parse(fromBase64Url(encodedPayload)) as SessionPayload;
     const name = sanitizeName(payload.name);
     const issuedAt = Number(payload.issuedAt);
-    if (!name || !Number.isFinite(issuedAt)) return null;
+    const nonce = typeof payload.nonce === "string" ? payload.nonce : "";
+    if (!name || !nonce || !Number.isFinite(issuedAt)) return null;
     if (Date.now() - issuedAt > SESSION_MAX_AGE * 1000) return null;
     if (issuedAt > Date.now() + 60_000) return null;
-    return { name };
+    return { name, nonce };
   } catch {
     return null;
   }

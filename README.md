@@ -14,6 +14,7 @@ Mini chat privado criado a partir da CLI oficial `create-next-app@latest`.
 - Server-Sent Events (SSE) para novas mensagens em tempo real;
 - sessão assinada em cookie HttpOnly, sem cadastro, login ou senha.
 - imagens comprimidas no navegador para WebP a 70% de qualidade;
+- notificação sonora fixa em 30% para novas mensagens de outras pessoas.
 - mini chat flutuante com Document Picture-in-Picture e fallback para popup.
 
 ## Rodando localmente
@@ -36,6 +37,8 @@ Abra `http://localhost:25000` e compartilhe a mesma chave somente com as pessoas
 O banco é criado automaticamente em `data/chat.db`. Essa pasta está ignorada pelo Git para que o histórico local não seja versionado. A cada mensagem, o arquivo é persistido no disco; para este mini chat em uma única instância, isso evita depender de extensões nativas do sistema.
 
 As imagens ficam em `data/uploads`, exigem uma sessão autorizada para serem abertas e são comprimidas no navegador para WebP com qualidade de 70%. O limite após a compressão é de 4 MB por imagem. Também é possível colar uma imagem da área de transferência com `Ctrl + V` diretamente no campo de mensagem.
+
+Quando uma mensagem é recebida de outra pessoa, o chat toca `public/notify.mp3` em volume fixo de 30%. Não há controle de volume na interface.
 
 ## Mini chat flutuante
 

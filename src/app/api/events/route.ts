@@ -8,11 +8,13 @@ import {
 export const runtime = "nodejs";
 
 export async function GET(request: Request) {
-  if (!getSessionFromRequest(request)) {
+  const session = getSessionFromRequest(request);
+  if (!session) {
     return new Response("Não autorizado", { status: 401 });
   }
 
   let cleanup = () => undefined;
+  let realtimeClient: ReturnType<typeof addRealtimeClient> | undefined;
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       let closed = false;
@@ -25,14 +27,14 @@ export async function GET(request: Request) {
         }
       }, 25_000);
 
-      addRealtimeClient(controller);
+      realtimeClient = addRealtimeClient(controller, session.nonce);
       controller.enqueue(encodeServerEvent("ready", { at: Date.now() }));
 
       cleanup = () => {
         if (closed) return;
         closed = true;
         clearInterval(heartbeat);
-        removeRealtimeClient(controller);
+        if (realtimeClient) removeRealtimeClient(realtimeClient);
       };
 
       request.signal.addEventListener("abort", cleanup, { once: true });

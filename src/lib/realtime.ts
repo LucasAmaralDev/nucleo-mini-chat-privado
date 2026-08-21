@@ -1,6 +1,9 @@
 import type { ChatMessage } from "@/lib/db";
 
-type RealtimeClient = ReadableStreamDefaultController<Uint8Array>;
+type RealtimeClient = {
+  controller: ReadableStreamDefaultController<Uint8Array>;
+  sessionNonce: string;
+};
 
 type GlobalWithRealtime = typeof globalThis & {
   __minichatRealtime?: {
@@ -19,8 +22,13 @@ function getRealtime() {
   return globalWithRealtime.__minichatRealtime;
 }
 
-export function addRealtimeClient(client: RealtimeClient) {
+export function addRealtimeClient(
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  sessionNonce: string,
+) {
+  const client = { controller, sessionNonce };
   getRealtime().clients.add(client);
+  return client;
 }
 
 export function removeRealtimeClient(client: RealtimeClient) {
@@ -31,12 +39,15 @@ export function encodeServerEvent(event: string, data: unknown) {
   return encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
-export function publishMessage(message: ChatMessage) {
-  const chunk = encodeServerEvent("message", message);
-
+export function publishMessage(message: ChatMessage, authorSessionNonce: string) {
   for (const client of getRealtime().clients) {
     try {
-      client.enqueue(chunk);
+      client.controller.enqueue(
+        encodeServerEvent("message", {
+          ...message,
+          isOwn: client.sessionNonce === authorSessionNonce,
+        }),
+      );
     } catch {
       removeRealtimeClient(client);
     }
@@ -48,7 +59,7 @@ export function publishChatCleared() {
 
   for (const client of getRealtime().clients) {
     try {
-      client.enqueue(chunk);
+      client.controller.enqueue(chunk);
     } catch {
       removeRealtimeClient(client);
     }

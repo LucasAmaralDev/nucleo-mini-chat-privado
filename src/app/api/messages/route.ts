@@ -124,7 +124,7 @@ export async function POST(request: Request) {
 
       return createMessage(session.name, body, uploadedImage, replyToId);
     });
-    publishMessage(message);
+    publishMessage(message, session.nonce);
     return NextResponse.json({ message }, { status: 201 });
   } catch (error) {
     if (uploadedImage) deleteImage(uploadedImage.filename);

@@ -31,6 +31,10 @@ type Message = {
   replyTo?: MessageReply;
 };
 
+type RealtimeMessage = Message & {
+  isOwn: boolean;
+};
+
 type MessageReply = {
   id: number;
   authorName: string;
@@ -184,6 +188,8 @@ export default function HomePage() {
   const miniComposerRef = useRef<HTMLTextAreaElement | null>(null);
   const miniWindowRef = useRef<Window | null>(null);
   const miniCleanupRef = useRef<(() => void) | null>(null);
+  const notificationAudioRef = useRef<HTMLAudioElement | null>(null);
+  const messageIdsRef = useRef<Set<number>>(new Set());
   const outboxRef = useRef<QueuedMessage[]>([]);
   const isProcessingOutboxRef = useRef(false);
 
@@ -191,6 +197,14 @@ export default function HomePage() {
     eventSourceRef.current?.close();
     eventSourceRef.current = null;
     setIsConnected(false);
+  }, []);
+
+  const playIncomingMessageSound = useCallback(() => {
+    const audio = notificationAudioRef.current;
+    if (!audio) return;
+
+    audio.currentTime = 0;
+    void audio.play().catch(() => undefined);
   }, []);
 
   const openRealtime = useCallback(() => {
@@ -201,18 +215,19 @@ export default function HomePage() {
     source.onopen = () => setIsConnected(true);
     source.onerror = () => setIsConnected(false);
     source.addEventListener("message", (event) => {
-      const nextMessage = JSON.parse(event.data) as Message;
-      setMessages((current) =>
-        current.some((message) => message.id === nextMessage.id)
-          ? current
-          : [...current, nextMessage],
-      );
+      const { isOwn, ...nextMessage } = JSON.parse(event.data) as RealtimeMessage;
+      if (messageIdsRef.current.has(nextMessage.id)) return;
+
+      messageIdsRef.current.add(nextMessage.id);
+      if (!isOwn) playIncomingMessageSound();
+      setMessages((current) => [...current, nextMessage]);
     });
     source.addEventListener("cleared", () => {
       setMessages([]);
       setReplyTo(null);
+      messageIdsRef.current.clear();
     });
-  }, [closeRealtime]);
+  }, [closeRealtime, playIncomingMessageSound]);
 
   const loadConversation = useCallback(async () => {
     try {
@@ -227,6 +242,7 @@ export default function HomePage() {
         messages: Message[];
       };
       setName(payload.name);
+      messageIdsRef.current = new Set(payload.messages.map((message) => message.id));
       setMessages(payload.messages);
       setView("chat");
       openRealtime();
@@ -246,6 +262,19 @@ export default function HomePage() {
       closeRealtime();
     };
   }, [closeRealtime, loadConversation]);
+
+  useEffect(() => {
+    const audio = new Audio("/notify.mp3");
+    audio.volume = 0.3;
+    notificationAudioRef.current = audio;
+
+    return () => {
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+      notificationAudioRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     const messageList = messageListRef.current;
@@ -588,6 +617,7 @@ export default function HomePage() {
     closeRealtime();
     await fetch("/api/logout", { method: "POST" });
     setMessages([]);
+    messageIdsRef.current.clear();
     setDraft("");
     setDraftImage(null);
     setReplyTo(null);
